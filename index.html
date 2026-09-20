@@ -35,6 +35,8 @@
   button:hover:not(:disabled) { border-color: #3b4252; }
   button:disabled { opacity: .4; cursor: default; }
   input[type=text] { width: 130px; }
+  input[type=password] { width: 110px; }
+  .take.remote { border-style: dashed; }
   .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; }
   .seg button[aria-pressed="true"] { background: var(--accent); color: #06240f; font-weight: 600; }
@@ -114,6 +116,8 @@
   <div class="bar"><i id="barfill"></i></div>
   <label class="chk"><input type="checkbox" id="advance" checked> auto-advance</label>
   <div class="grow"></div>
+  <input type="password" id="key" placeholder="team key" title="The UPLOAD_KEY set on the deployment. Without it, takes stay in this browser.">
+  <button id="sync">Sync</button>
   <button id="export">Download ZIP</button>
 </header>
 
@@ -153,7 +157,9 @@
   let filter = "all";
   let current = 0;
   let visible = clips;
-  const takes = new Map();      // "en/001" -> [take, ...]
+  const takes = new Map();      // "en/001" -> [take, ...]   recorded in this browser
+  const remote = new Map();     // "en/001" -> [{pathname, url, speaker}] from the team store
+  let teamKey = localStorage.getItem("key") || "";
 
   /* ---------- storage: one row per take, not per clip ---------- */
   const DB = "aapka-clips";
@@ -177,7 +183,9 @@
   /* ---------- state ---------- */
   const key = (c) => `${lang}/${c.index}`;
   const listFor = (c) => takes.get(key(c)) || [];
+  const remoteFor = (c) => remote.get(key(c)) || [];
   const statusOf = (c) => {
+    if (remoteFor(c).length) return "done";      // someone on the team has it
     const t = listFor(c);
     if (!t.length) return "todo";
     return t.every((x) => x.peak < QUIET) ? "quiet" : "done";
@@ -211,7 +219,7 @@
     [...$("list").children].forEach((row, i) => {
       const c = visible[i];
       const st = statusOf(c);
-      const n = listFor(c).length;
+      const n = listFor(c).length + remoteFor(c).length;
       row.setAttribute("aria-current", i === current ? "true" : "false");
       row.querySelector(".dot").className = `dot ${st === "todo" ? "" : st}`;
       row.querySelector(".c").textContent = n > 1 ? `${n} takes` : n ? "1 take" : "";
@@ -259,7 +267,8 @@
     const list = listFor(c);
     const box = $("takes");
     box.replaceChildren();
-    if (!list.length) {
+    const theirs = remoteFor(c);
+    if (!list.length && !theirs.length) {
       const p = document.createElement("div");
       p.className = "hint";
       p.textContent = "No takes yet. Hit record, say the line, hit stop.";
@@ -272,7 +281,8 @@
       const who = document.createElement("span");
       who.className = "who";
       who.textContent = `take ${i + 1} · ${t.speaker || "anon"} · ${(t.ms / 1000).toFixed(1)}s` +
-        (t.peak < QUIET ? " · almost silent" : "");
+        (t.peak < QUIET ? " · almost silent" : "") +
+        (t.url ? " · synced" : teamKey ? " · not synced" : "");
       if (t.peak < QUIET) who.classList.add("warn");
       const audio = document.createElement("audio");
       audio.controls = true;
@@ -289,6 +299,97 @@
       el.append(who, audio, rm);
       box.append(el);
     });
+
+    theirs.forEach((r) => {
+      const el = document.createElement("div");
+      el.className = "take remote";
+      const who = document.createElement("span");
+      who.className = "who";
+      who.textContent = `${r.speaker} · from the team store`;
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.preload = "none";
+      audio.src = r.url;
+      el.append(who, audio);
+      box.append(el);
+    });
+  }
+
+  /* ---------- the shared store ---------- */
+  const b64 = (buf) => {
+    const bytes = new Uint8Array(buf);
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(out);
+  };
+
+  const pathOf = (t) => {
+    const who = (t.speaker || "anon").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "anon";
+    return `${t.lang}/${t.index}_${who}_${t.at}.${extFor(t.mime)}`;
+  };
+
+  async function upload(take) {
+    if (!teamKey || take.url) return false;
+    const res = await fetch("api/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-upload-key": teamKey },
+      body: JSON.stringify({
+        name: pathOf(take),
+        contentType: take.mime,
+        data: b64(await take.blob.arrayBuffer()),
+      }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    take.url = (await res.json()).url;
+    await put(take);
+    return true;
+  }
+
+  async function loadRemote() {
+    if (!teamKey) return;
+    const res = await fetch("api/list", { headers: { "x-upload-key": teamKey } });
+    if (!res.ok) {
+      $("status").innerHTML = `<span class="warn">Team store unreachable (${res.status}). ` +
+        `Takes are still saved in this browser.</span>`;
+      return;
+    }
+    const mine = new Set([...takes.values()].flat().map(pathOf));
+    remote.clear();
+    for (const b of (await res.json()).blobs) {
+      if (mine.has(b.pathname)) continue;               // my own upload, already shown
+      const parts = b.pathname.split("/");
+      const bits = (parts[1] || "").split("_");
+      if (parts.length !== 2 || bits.length < 3) continue;
+      const k = `${parts[0]}/${bits[0]}`;
+      remote.set(k, [...(remote.get(k) || []), { pathname: b.pathname, url: b.url, speaker: bits[1] }]);
+    }
+    markRows();
+    renderCount();
+    renderTakes();
+  }
+
+  async function syncAll() {
+    if (!teamKey) return alert("Enter the team key first - ask whoever set up the deployment.");
+    const pending = [...takes.values()].flat().filter((t) => !t.url);
+    $("sync").disabled = true;
+    let done = 0;
+    try {
+      for (const t of pending) {
+        await upload(t);
+        $("sync").textContent = `Sync ${++done}/${pending.length}`;
+      }
+      await loadRemote();
+      $("status").textContent = `${done} take(s) uploaded. Everyone on the team sees them now.`;
+    } catch (e) {
+      $("status").innerHTML = `<span class="warn">Upload failed: ${e.message}. ` +
+        `Nothing is lost - the takes are still here, hit Sync again.</span>`;
+    } finally {
+      $("sync").disabled = false;
+      $("sync").textContent = "Sync";
+      renderTakes();
+    }
   }
 
   /* ---------- microphone ---------- */
@@ -377,6 +478,10 @@
     renderTakes();
     markRows();
     renderCount();
+    upload(take).then((ok) => ok && renderTakes()).catch((e) => {
+      $("status").innerHTML = `<span class="warn">Not uploaded (${e.message}). ` +
+        `The take is safe in this browser - hit Sync when that is fixed.</span>`;
+    });
     if ($("advance").checked && tookPeak >= QUIET) setTimeout(() => move(1), 400);
   }
 
@@ -412,6 +517,16 @@
           `"${r.text.replace(/"/g, '""')}"`,
         ].join(","));
       }
+      // Whatever the rest of the team uploaded, so one ZIP is the whole corpus.
+      for (const [, list] of remote) {
+        for (const r of list) {
+          const data = new Uint8Array(await (await fetch(r.url)).arrayBuffer());
+          files.push({ name: r.pathname, data });
+          const file = r.pathname.split("/")[1];
+          manifest.push([r.pathname, file.slice(0, 3), r.pathname.split("/")[0],
+            r.speaker, "", "", '"(recorded by the team, not in this browser)"'].join(","));
+        }
+      }
       files.push({ name: "manifest.csv", data: new TextEncoder().encode("﻿" + manifest.join("\n") + "\n") });
       const url = URL.createObjectURL(makeZip(files));
       const a = document.createElement("a");
@@ -435,6 +550,13 @@
     localStorage.setItem("speaker", speaker);
     renderCurrent();
   };
+  $("key").value = teamKey;
+  $("key").onchange = (e) => {
+    teamKey = e.target.value.trim();
+    localStorage.setItem("key", teamKey);
+    loadRemote();
+  };
+  $("sync").onclick = syncAll;
   $("filter").onchange = (e) => {
     filter = e.target.value;
     current = 0;
@@ -483,8 +605,11 @@
     renderList();
     renderCount();
     renderCurrent();
-    $("status").textContent = `${clips.length} clips per language. Takes live in this browser only — ` +
-      `download the ZIP before clearing site data, and after every session.`;
+    $("status").textContent = teamKey
+      ? `${clips.length} clips per language. Takes upload to the team store as you record.`
+      : `${clips.length} clips per language. No team key yet, so takes stay in this browser — ` +
+        `download the ZIP before clearing site data.`;
+    loadRemote();
   })();
 })();
 </script>
