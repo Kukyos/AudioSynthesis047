@@ -11,12 +11,15 @@ Plain HTML and JavaScript — no framework, no build step, two tiny API routes.
 1. Import this repo on Vercel. Framework preset **Other**, no build command, output
    directory **`.`** (the repo root).
 2. Storage → **Create Blob Store**, name it `aapka-clips`, region Mumbai (`bom1`), access
-   **Public**. Connect it to the project — that sets `BLOB_READ_WRITE_TOKEN` for you.
-   Public means a clip's URL plays without a token, which is how the page previews takes;
-   the URLs hold nothing but people reading scripted lines.
-3. Settings → Environment Variables → add **`UPLOAD_KEY`**, any shared passphrase. Both
+   **Public**. Public means a clip's URL plays without a token, which is how the page
+   previews takes; the URLs hold nothing but people reading scripted lines.
+3. Connect the store to the project. In that dialog: leave the **custom environment
+   variable prefix empty**, and **tick "Add a read-write token env var"** — without the
+   token neither route can reach the store. (A prefixed token still works; the routes look
+   for any `*_READ_WRITE_TOKEN`.)
+4. Settings → Environment Variables → add **`UPLOAD_KEY`**, any shared passphrase. Both
    API routes refuse everything without it, so nobody can dump files into the store.
-4. Redeploy. Give teammates the URL and the key.
+5. Redeploy. Give teammates the URL and the key.
 
 Locally, the page alone works over any static server; the upload and list routes only
 exist on Vercel.
