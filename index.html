@@ -497,7 +497,8 @@
   /* ---------- export ---------- */
   $("export").onclick = async () => {
     const rows = (await all()).sort((a, b) => a.at - b.at);
-    if (!rows.length) return alert("Nothing recorded yet.");
+    const theirs = [...remote.values()].flat();
+    if (!rows.length && !theirs.length) return alert("Nothing recorded yet.");
     $("export").disabled = true;
     $("export").textContent = "Packing…";
     try {
@@ -518,22 +519,36 @@
         ].join(","));
       }
       // Whatever the rest of the team uploaded, so one ZIP is the whole corpus.
-      for (const [, list] of remote) {
-        for (const r of list) {
-          const data = new Uint8Array(await (await fetch(r.url)).arrayBuffer());
-          files.push({ name: r.pathname, data });
-          const file = r.pathname.split("/")[1];
-          manifest.push([r.pathname, file.slice(0, 3), r.pathname.split("/")[0],
-            r.speaker, "", "", '"(recorded by the team, not in this browser)"'].join(","));
+      // Each one is fetched on its own: a blob that 404s or is blocked costs us that
+      // clip, never the download.
+      const failed = [];
+      for (const r of theirs) {
+        try {
+          const res = await fetch(r.url);
+          if (!res.ok) throw new Error(res.status);
+          files.push({ name: r.pathname, data: new Uint8Array(await res.arrayBuffer()) });
+          manifest.push([r.pathname, r.pathname.split("/")[1].slice(0, 3),
+            r.pathname.split("/")[0], r.speaker, "", "",
+            '"(recorded by the team, not in this browser)"'].join(","));
+        } catch (e) {
+          failed.push(r.pathname);
         }
+        $("export").textContent = `Packing ${files.length}…`;
       }
       files.push({ name: "manifest.csv", data: new TextEncoder().encode("﻿" + manifest.join("\n") + "\n") });
       const url = URL.createObjectURL(makeZip(files));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `aapka-clips-${slug()}-${rows.length}.zip`;
+      a.download = `aapka-clips-${slug()}-${files.length - 1}.zip`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 15000);
+      $("status").innerHTML = failed.length
+        ? `<span class="warn">${files.length - 1} clips zipped. ${failed.length} could not be ` +
+          `fetched from the team store: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}</span>`
+        : `${files.length - 1} clips zipped, ${rows.length} of them recorded here.`;
+    } catch (e) {
+      $("status").innerHTML = `<span class="warn">Could not build the ZIP: ${e.message}. ` +
+        `Nothing was deleted — try again.</span>`;
     } finally {
       $("export").disabled = false;
       $("export").textContent = "Download ZIP";
