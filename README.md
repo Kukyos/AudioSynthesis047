@@ -4,7 +4,7 @@ A page for recording the answer-clip corpus: 270 lines per language, English and
 Click a line, hit record, say it, hit stop. Every take is playable straight away, and with a
 team key it uploads to a shared store so everyone sees the same progress.
 
-Plain HTML and JavaScript — no framework, no build step, two tiny API routes.
+Plain HTML and JavaScript — no framework, no build step, three tiny API routes.
 
 ## Deploy
 
@@ -42,6 +42,12 @@ Two places, on purpose.
 
 A take that failed to upload is labelled `not synced`; **Sync** retries all of them. Nothing
 is ever dropped because an upload failed.
+
+**Deleting** a take removes it from both places — the shared store first, then this browser,
+so it cannot reappear on the next refresh. Anyone with the key can delete anyone's take,
+including one recorded on another machine; the button arms on the first click and deletes on
+the second. The team's list refreshes every 30 seconds and whenever you return to the tab,
+so two people do not sit on the same line all afternoon.
 
 Without a key, nothing leaves the browser — that is fine, but then **Download ZIP** is the
 only copy, and clearing site data loses the rest.

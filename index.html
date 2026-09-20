@@ -287,15 +287,14 @@
       const audio = document.createElement("audio");
       audio.controls = true;
       audio.src = URL.createObjectURL(t.blob);
-      const rm = document.createElement("button");
-      rm.textContent = "Delete";
-      rm.onclick = async () => {
+      const rm = armed("Delete", async () => {
+        if (t.url) await dropFromStore(t.url);   // or it comes straight back on reload
         await del(t.id);
         takes.set(key(c), listFor(c).filter((x) => x.id !== t.id));
         renderTakes();
         markRows();
         renderCount();
-      };
+      });
       el.append(who, audio, rm);
       box.append(el);
     });
@@ -310,12 +309,60 @@
       audio.controls = true;
       audio.preload = "none";
       audio.src = r.url;
-      el.append(who, audio);
+      const rm = armed("Delete", async () => {
+        await dropFromStore(r.url);
+        remote.set(key(c), remoteFor(c).filter((x) => x.pathname !== r.pathname));
+        renderTakes();
+        markRows();
+        renderCount();
+      });
+      el.append(who, audio, rm);
       box.append(el);
     });
   }
 
   /* ---------- the shared store ---------- */
+  // Click once to arm, click again to do it. No confirm() — a modal dialog blocks
+  // everything else on the page.
+  function armed(label, run) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.onclick = async () => {
+      if (b.dataset.armed !== "1") {
+        b.dataset.armed = "1";
+        b.textContent = "Sure?";
+        b.classList.add("warn");
+        setTimeout(() => {
+          if (!b.isConnected) return;
+          b.dataset.armed = "0";
+          b.textContent = label;
+          b.classList.remove("warn");
+        }, 4000);
+        return;
+      }
+      b.disabled = true;
+      b.textContent = "…";
+      try {
+        await run();
+      } catch (e) {
+        $("status").innerHTML = `<span class="warn">Could not delete: ${e.message}</span>`;
+        b.disabled = false;
+        b.textContent = label;
+        b.dataset.armed = "0";
+      }
+    };
+    return b;
+  }
+
+  async function dropFromStore(urlOrPath) {
+    const res = await fetch("api/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-upload-key": teamKey },
+      body: JSON.stringify({ url: urlOrPath }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  }
+
   const b64 = (buf) => {
     const bytes = new Uint8Array(buf);
     let out = "";
@@ -367,7 +414,9 @@
     }
     markRows();
     renderCount();
-    renderTakes();
+    // A background refresh must not yank a take out from under someone playing it.
+    const playing = [...$("takes").querySelectorAll("audio")].some((a) => !a.paused);
+    if (!playing) renderTakes();
   }
 
   async function syncAll() {
@@ -605,6 +654,14 @@
   };
 
   window.onbeforeunload = (e) => { if (recorder) { e.preventDefault(); e.returnValue = ""; } };
+
+  // Without this the team's progress is whatever it was when the page opened, and two
+  // people happily record the same line all afternoon.
+  const refresh = () => {
+    if (!recorder && teamKey && document.visibilityState === "visible") loadRemote();
+  };
+  setInterval(refresh, 30000);
+  window.addEventListener("focus", refresh);
 
   /* ---------- boot ---------- */
   (async () => {
