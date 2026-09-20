@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aapka clip recorder</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --line: #262b36;
+    --text: #e7eaf0;
+    --dim: #8b93a7;
+    --accent: #4ade80;
+    --rec: #f87171;
+    --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, "Segoe UI", sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .grow { flex: 1; }
+  button, select, input[type=text] {
+    background: #20242e; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: #3b4252; }
+  button:disabled { opacity: .4; cursor: default; }
+  input[type=text] { width: 130px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #06240f; font-weight: 600; }
+  .progress { font-variant-numeric: tabular-nums; color: var(--dim); }
+  .progress b { color: var(--text); }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; width: 120px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+  #list { width: 390px; border-right: 1px solid var(--line); overflow-y: auto; }
+  .row {
+    display: flex; gap: 10px; align-items: center; padding: 7px 12px;
+    border-bottom: 1px solid #1c2029; cursor: pointer;
+  }
+  .row:hover { background: #1b1f28; }
+  .row[aria-current="true"] { background: #1f2a22; box-shadow: inset 3px 0 0 var(--accent); }
+  .row .n { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 13px; width: 30px; flex: none; }
+  .row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .c { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #333a48; flex: none; }
+  .dot.done { background: var(--accent); }
+  .dot.quiet { background: var(--warn); }
+
+  #panel { flex: 1; padding: 26px 30px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  .qctx { color: var(--dim); font-size: 14px; }
+  .say { font-size: clamp(26px, 4.2vw, 44px); line-height: 1.25; font-weight: 600; }
+  .say small { display: block; font-size: 14px; font-weight: 400; color: var(--warn); margin-top: 8px; }
+  .say small.roman { color: var(--dim); font-size: 20px; letter-spacing: .01em; }
+  .idx { color: var(--dim); font-variant-numeric: tabular-nums; letter-spacing: .08em; font-size: 13px; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #rec {
+    background: var(--rec); color: #2b0a0a; border: 0; font-weight: 700;
+    padding: 13px 24px; font-size: 16px; border-radius: 8px; min-width: 180px;
+  }
+  #rec.on { background: #fff; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .55; } }
+  .meter { width: 160px; height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--accent); }
+  .timer { font-variant-numeric: tabular-nums; color: var(--dim); min-width: 46px; }
+  .takes { display: flex; flex-direction: column; gap: 8px; }
+  .take {
+    display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; flex-wrap: wrap;
+  }
+  .take .who { font-size: 13px; color: var(--dim); min-width: 150px; }
+  .take audio { height: 32px; flex: 1; min-width: 220px; }
+  .take button { padding: 4px 9px; font-size: 13px; }
+  .hint { color: var(--dim); font-size: 13px; }
+  .warn { color: var(--warn); }
+  kbd {
+    background: #20242e; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; font: 12px ui-monospace, monospace;
+  }
+  label.chk { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; cursor: pointer; }
+  @media (max-width: 860px) {
+    main { flex-direction: column; }
+    #list { width: 100%; height: 32vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    #panel { padding: 18px 14px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aapka clips</h1>
+  <div class="seg" id="lang">
+    <button data-lang="en" aria-pressed="true">English</button>
+    <button data-lang="hi" aria-pressed="false">हिंदी</button>
+  </div>
+  <input type="text" id="speaker" placeholder="your name" title="Goes in every filename, so two people's ZIPs merge without clashing">
+  <select id="filter">
+    <option value="all">All clips</option>
+    <option value="todo">Not recorded</option>
+    <option value="done">Recorded</option>
+    <option value="quiet">Flagged quiet</option>
+  </select>
+  <div class="progress"><b id="count">0</b> / <span id="total">0</span></div>
+  <div class="bar"><i id="barfill"></i></div>
+  <label class="chk"><input type="checkbox" id="advance" checked> auto-advance</label>
+  <div class="grow"></div>
+  <button id="export">Download ZIP</button>
+</header>
+
+<main>
+  <div id="list"></div>
+  <div id="panel">
+    <div class="idx" id="idx">—</div>
+    <div class="qctx" id="qctx"></div>
+    <div class="say" id="say">Loading…</div>
+    <div class="controls">
+      <button id="rec">Record</button>
+      <span class="timer" id="timer">0.0s</span>
+      <div class="meter"><i id="level"></i></div>
+      <button id="prev">← Prev</button>
+      <button id="next">Next →</button>
+    </div>
+    <div class="takes" id="takes"></div>
+    <div class="hint">
+      <kbd>space</kbd> record / stop &nbsp; <kbd>enter</kbd> next &nbsp;
+      <kbd>p</kbd> play last take &nbsp; <kbd>←</kbd> <kbd>→</kbd> move
+    </div>
+    <div class="hint" id="status"></div>
+  </div>
+</main>
+
+<script src="clips.js"></script>
+<script src="zip.js"></script>
+<script>
+(() => {
+  "use strict";
+  const clips = window.CLIPS;
+  const $ = (id) => document.getElementById(id);
+  const QUIET = 0.02;           // peak below this and the take is probably silence
+
+  let lang = localStorage.getItem("lang") || "en";
+  let speaker = localStorage.getItem("speaker") || "";
+  let filter = "all";
+  let current = 0;
+  let visible = clips;
+  const takes = new Map();      // "en/001" -> [take, ...]
+
+  /* ---------- storage: one row per take, not per clip ---------- */
+  const DB = "aapka-clips";
+  let db;
+  const open = () => new Promise((res, rej) => {
+    const r = indexedDB.open(DB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("takes", { keyPath: "id" });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  const tx = (mode, fn) => new Promise((res, rej) => {
+    const t = db.transaction("takes", mode);
+    const req = fn(t.objectStore("takes"));
+    t.oncomplete = () => res(req && req.result);
+    t.onerror = () => rej(t.error);
+  });
+  const put = (r) => tx("readwrite", (s) => s.put(r));
+  const del = (id) => tx("readwrite", (s) => s.delete(id));
+  const all = () => tx("readonly", (s) => s.getAll());
+
+  /* ---------- state ---------- */
+  const key = (c) => `${lang}/${c.index}`;
+  const listFor = (c) => takes.get(key(c)) || [];
+  const statusOf = (c) => {
+    const t = listFor(c);
+    if (!t.length) return "todo";
+    return t.every((x) => x.peak < QUIET) ? "quiet" : "done";
+  };
+  const slug = () => (speaker.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "anon");
+
+  function applyFilter() {
+    visible = clips.filter((c) => filter === "all" || statusOf(c) === filter);
+    if (!visible.length) visible = clips;
+    current = Math.min(current, visible.length - 1);
+  }
+
+  /* ---------- rendering ---------- */
+  function renderList() {
+    const frag = document.createDocumentFragment();
+    visible.forEach((c, i) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.setAttribute("aria-current", i === current ? "true" : "false");
+      row.innerHTML = `<span class="dot"></span><span class="n">${c.index}</span>` +
+        `<span class="t"></span><span class="c"></span>`;
+      row.querySelector(".t").textContent = lang === "hi" ? `${c.hi}  ·  ${c.roman}` : c.en;
+      row.onclick = () => { current = i; renderCurrent(); markRows(); };
+      frag.appendChild(row);
+    });
+    $("list").replaceChildren(frag);
+    markRows();
+  }
+
+  function markRows() {
+    [...$("list").children].forEach((row, i) => {
+      const c = visible[i];
+      const st = statusOf(c);
+      const n = listFor(c).length;
+      row.setAttribute("aria-current", i === current ? "true" : "false");
+      row.querySelector(".dot").className = `dot ${st === "todo" ? "" : st}`;
+      row.querySelector(".c").textContent = n > 1 ? `${n} takes` : n ? "1 take" : "";
+    });
+    const row = $("list").children[current];
+    if (row) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function renderCount() {
+    const done = clips.filter((c) => statusOf(c) !== "todo").length;
+    $("count").textContent = done;
+    $("total").textContent = clips.length;
+    $("barfill").style.width = (100 * done / clips.length) + "%";
+  }
+
+  function renderCurrent() {
+    const c = visible[current];
+    if (!c) return;
+    $("idx").textContent = `${lang.toUpperCase()} · clip ${c.index} · saves as ${lang}/${c.index}_${slug()}`;
+    const asked = [...new Set(c.asked.map((a) => a[lang] || a.en))];
+    $("qctx").replaceChildren(...asked.map((q) => {
+      const d = document.createElement("div");
+      d.textContent = "Q: " + q;
+      return d;
+    }));
+    $("say").textContent = c[lang];
+    if (lang === "hi") {
+      // Reading aid for whoever is recording, not text a patient ever sees.
+      const r = document.createElement("small");
+      r.className = "roman";
+      r.textContent = c.roman;
+      $("say").appendChild(r);
+    }
+    const twins = clips.filter((o) => o !== c && o[lang] === c[lang]).map((o) => o.index);
+    if (twins.length) {
+      const s = document.createElement("small");
+      s.textContent = `Same words as ${twins.join(", ")} — the other language differs there, so record this one too.`;
+      $("say").appendChild(s);
+    }
+    renderTakes();
+  }
+
+  function renderTakes() {
+    const c = visible[current];
+    const list = listFor(c);
+    const box = $("takes");
+    box.replaceChildren();
+    if (!list.length) {
+      const p = document.createElement("div");
+      p.className = "hint";
+      p.textContent = "No takes yet. Hit record, say the line, hit stop.";
+      box.append(p);
+      return;
+    }
+    list.forEach((t, i) => {
+      const el = document.createElement("div");
+      el.className = "take";
+      const who = document.createElement("span");
+      who.className = "who";
+      who.textContent = `take ${i + 1} · ${t.speaker || "anon"} · ${(t.ms / 1000).toFixed(1)}s` +
+        (t.peak < QUIET ? " · almost silent" : "");
+      if (t.peak < QUIET) who.classList.add("warn");
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.src = URL.createObjectURL(t.blob);
+      const rm = document.createElement("button");
+      rm.textContent = "Delete";
+      rm.onclick = async () => {
+        await del(t.id);
+        takes.set(key(c), listFor(c).filter((x) => x.id !== t.id));
+        renderTakes();
+        markRows();
+        renderCount();
+      };
+      el.append(who, audio, rm);
+      box.append(el);
+    });
+  }
+
+  /* ---------- microphone ---------- */
+  let stream, analyser, data, recorder, chunks, peak, startedAt;
+
+  async function mic() {
+    if (stream) return stream;
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        // Deliberately off: this corpus is the ASR test set. Browser cleanup would
+        // alter the very signal we want to measure, and hospital noise is mixed in
+        // later at a known SNR instead of being recorded in.
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+    const ctx = new AudioContext();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    data = new Float32Array(analyser.fftSize);
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    meterLoop();
+    return stream;
+  }
+
+  function meterLoop() {
+    analyser.getFloatTimeDomainData(data);
+    let p = 0;
+    for (const v of data) p = Math.max(p, Math.abs(v));
+    if (recorder && recorder.state === "recording") peak = Math.max(peak, p);
+    $("level").style.width = Math.min(100, p * 140) + "%";
+    $("level").style.background = p > 0.95 ? "var(--rec)" : "var(--accent)";
+    requestAnimationFrame(meterLoop);
+  }
+
+  const MIMES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+  const pickMime = () => MIMES.find((m) => MediaRecorder.isTypeSupported(m)) || "";
+  const extFor = (m) => (m.includes("webm") ? "webm" : m.includes("mp4") ? "m4a" : m.includes("ogg") ? "ogg" : "bin");
+
+  async function start() {
+    try {
+      await mic();
+    } catch (e) {
+      $("status").innerHTML = `<span class="warn">No microphone (${e.name}). Allow mic access — and the page must be on https or http://localhost, not a file:// path.</span>`;
+      return;
+    }
+    const mime = pickMime();
+    chunks = [];
+    peak = 0;
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 64000 } : undefined);
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstop = save;
+    recorder.start();
+    startedAt = performance.now();
+    $("rec").textContent = "Stop";
+    $("rec").classList.add("on");
+    tick();
+  }
+
+  function tick() {
+    if (!recorder || recorder.state !== "recording") return;
+    $("timer").textContent = ((performance.now() - startedAt) / 1000).toFixed(1) + "s";
+    setTimeout(tick, 100);
+  }
+
+  async function save() {
+    const c = visible[current];
+    const mime = recorder.mimeType || "audio/webm";
+    const blob = new Blob(chunks, { type: mime });
+    const ms = performance.now() - startedAt;
+    const tookPeak = peak;
+    recorder = null;
+    $("rec").textContent = "Record";
+    $("rec").classList.remove("on");
+    if (!blob.size) return;
+
+    const take = {
+      id: `${key(c)}/${Date.now()}`,
+      lang, index: c.index, text: c[lang], speaker: speaker.trim(),
+      blob, mime, ms, peak: tookPeak, at: Date.now(),
+    };
+    await put(take);
+    takes.set(key(c), [...listFor(c), take]);
+    renderTakes();
+    markRows();
+    renderCount();
+    if ($("advance").checked && tookPeak >= QUIET) setTimeout(() => move(1), 400);
+  }
+
+  const toggle = () => (recorder && recorder.state === "recording" ? recorder.stop() : start());
+
+  function move(step) {
+    if (recorder) return;
+    current = Math.max(0, Math.min(visible.length - 1, current + step));
+    renderCurrent();
+    markRows();
+  }
+
+  /* ---------- export ---------- */
+  $("export").onclick = async () => {
+    const rows = (await all()).sort((a, b) => a.at - b.at);
+    if (!rows.length) return alert("Nothing recorded yet.");
+    $("export").disabled = true;
+    $("export").textContent = "Packing…";
+    try {
+      const seen = new Map();
+      const files = [];
+      const manifest = ["file,index,lang,speaker,seconds,peak,text"];
+      for (const r of rows) {
+        const who = (r.speaker || "anon").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "anon";
+        const stem = `${r.lang}/${r.index}_${who}`;
+        const n = (seen.get(stem) || 0) + 1;
+        seen.set(stem, n);
+        const name = `${stem}${n > 1 ? "-" + n : ""}.${extFor(r.mime)}`;
+        files.push({ name, data: new Uint8Array(await r.blob.arrayBuffer()) });
+        manifest.push([
+          name, r.index, r.lang, r.speaker || "anon",
+          (r.ms / 1000).toFixed(1), r.peak.toFixed(3),
+          `"${r.text.replace(/"/g, '""')}"`,
+        ].join(","));
+      }
+      files.push({ name: "manifest.csv", data: new TextEncoder().encode("﻿" + manifest.join("\n") + "\n") });
+      const url = URL.createObjectURL(makeZip(files));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `aapka-clips-${slug()}-${rows.length}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 15000);
+    } finally {
+      $("export").disabled = false;
+      $("export").textContent = "Download ZIP";
+    }
+  };
+
+  /* ---------- wiring ---------- */
+  $("rec").onclick = toggle;
+  $("prev").onclick = () => move(-1);
+  $("next").onclick = () => move(1);
+  $("speaker").value = speaker;
+  $("speaker").oninput = (e) => {
+    speaker = e.target.value;
+    localStorage.setItem("speaker", speaker);
+    renderCurrent();
+  };
+  $("filter").onchange = (e) => {
+    filter = e.target.value;
+    current = 0;
+    applyFilter();
+    renderList();
+    renderCurrent();
+  };
+  $("lang").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b || recorder) return;
+    lang = b.dataset.lang;
+    localStorage.setItem("lang", lang);
+    [...$("lang").children].forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    document.documentElement.lang = lang;
+    applyFilter();
+    renderList();
+    renderCurrent();
+    renderCount();
+  };
+
+  document.onkeydown = (e) => {
+    if (e.target.matches("input, select, textarea")) return;
+    if (e.code === "Space") { e.preventDefault(); toggle(); }
+    else if (e.key === "Enter") { e.preventDefault(); move(1); }
+    else if (e.key === "ArrowRight") move(1);
+    else if (e.key === "ArrowLeft") move(-1);
+    else if (e.key === "p") {
+      const a = $("takes").querySelectorAll("audio");
+      if (a.length) { const last = a[a.length - 1]; last.currentTime = 0; last.play(); }
+    }
+  };
+
+  window.onbeforeunload = (e) => { if (recorder) { e.preventDefault(); e.returnValue = ""; } };
+
+  /* ---------- boot ---------- */
+  (async () => {
+    db = await open();
+    if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
+    for (const t of (await all()).sort((a, b) => a.at - b.at)) {
+      const k = `${t.lang}/${t.index}`;
+      takes.set(k, [...(takes.get(k) || []), t]);
+    }
+    [...$("lang").children].forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.lang === lang)));
+    document.documentElement.lang = lang;
+    applyFilter();
+    renderList();
+    renderCount();
+    renderCurrent();
+    $("status").textContent = `${clips.length} clips per language. Takes live in this browser only — ` +
+      `download the ZIP before clearing site data, and after every session.`;
+  })();
+})();
+</script>
+</body>
+</html>
